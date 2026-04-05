@@ -55,7 +55,7 @@ class QuijoteApp(App):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.nlp = spacy.load("es_core_news_sm")
+        self.nlp = spacy.load("es_core_news_lg")
         self.index = QuijoteIndex(self.nlp)
         self.selected_mode = MODE_CLASSIC
         self.current_query = ""
