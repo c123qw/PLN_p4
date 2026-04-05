@@ -86,6 +86,7 @@ def generar_respuesta_ollama(
             f"Sección: {result.chunk.seccion}\n"
             f"Texto:\n{result.chunk.texto}"
         )
+    joined_context_blocks = "\n\n".join(context_blocks)
 
     response = chat(
         model=modelo,
@@ -102,7 +103,7 @@ def generar_respuesta_ollama(
                 "role": "user",
                 "content": (
                     f"Consulta: {consulta}\n\n"
-                    f"Pasajes recuperados:\n\n{'\n\n'.join(context_blocks)}"
+                    f"Pasajes recuperados:\n\n{joined_context_blocks}"
                 ),
             },
         ],

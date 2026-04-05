@@ -39,6 +39,15 @@ class SearchResult:
     semantico_score: float = 0.0
 
 
+@dataclass(slots=True)
+class _DocFeatures:
+    conteos: Counter[str]
+    total_terminos: int
+    lemma_set: frozenset[str]
+    vector_sums: dict[str, list[float]]
+    vector_counts: Counter[str]
+
+
 class QuijoteIndex:
     def __init__(self, nlp, chunk_size_words: int = 180, chunk_overlap_words: int = 45) -> None:
         self.nlp = nlp
@@ -47,6 +56,7 @@ class QuijoteIndex:
         self.chunks: list[ChunkRecord] = []
         self.chunk_by_id: dict[int, ChunkRecord] = {}
         self.df_global: Counter[str] = Counter()
+        self._idf_cache: dict[str, float] = {}
         self.total_chunks = 0
         self.total_sections = 0
 
@@ -61,10 +71,22 @@ class QuijoteIndex:
         self.chunks.clear()
         self.chunk_by_id.clear()
         self.df_global.clear()
+        self._idf_cache.clear()
 
+        features_by_chunk: list[_DocFeatures] = []
         docs = self.nlp.pipe((raw_chunk["texto"] for raw_chunk in raw_chunks), batch_size=32)
-        for raw_chunk, doc in zip(raw_chunks, docs):
-            analisis = self._analizar_doc(doc)
+        for doc in docs:
+            features = self._extraer_features_doc(doc)
+            features_by_chunk.append(features)
+            for lema in features.lemma_set:
+                self.df_global[lema] += 1
+
+        self.total_sections = len(sections)
+        self.total_chunks = len(raw_chunks)
+        self._idf_cache.clear()
+
+        for raw_chunk, features in zip(raw_chunks, features_by_chunk):
+            analisis = self._construir_analisis(features)
             record = ChunkRecord(
                 chunk_id=raw_chunk["chunk_id"],
                 titulo=raw_chunk["titulo"],
@@ -74,17 +96,13 @@ class QuijoteIndex:
             )
             self.chunks.append(record)
             self.chunk_by_id[record.chunk_id] = record
-            for lema in analisis.lemma_set:
-                self.df_global[lema] += 1
 
-        self.total_sections = len(sections)
-        self.total_chunks = len(self.chunks)
         return {"sections": self.total_sections, "chunks": self.total_chunks}
 
     def analizar_texto(self, texto: str) -> TextAnalysis:
         if not texto.strip():
             return TextAnalysis.empty()
-        return self._analizar_doc(self.nlp(texto))
+        return self._construir_analisis(self._extraer_features_doc(self.nlp(texto)))
 
     def calcular_score_tfidf(self, query_analysis: TextAnalysis, chunk: ChunkRecord) -> float:
         if chunk.analisis.total_terminos == 0:
@@ -222,10 +240,23 @@ class QuijoteIndex:
 
         return chunk_texts
 
-    def _analizar_doc(self, doc) -> TextAnalysis:
-        lemmas: list[str] = []
-        vector_sum: list[float] = []
-        token_count = 0
+    def _idf_para_lema(self, lema: str) -> float:
+        cached = self._idf_cache.get(lema)
+        if cached is not None:
+            return cached
+
+        if self.total_chunks == 0:
+            return 1.0
+
+        df = self.df_global.get(lema, 0)
+        idf = math.log((1 + self.total_chunks) / (1 + df)) + 1.0
+        self._idf_cache[lema] = idf
+        return idf
+
+    def _extraer_features_doc(self, doc) -> _DocFeatures:
+        conteos: Counter[str] = Counter()
+        vector_sums: dict[str, list[float]] = {}
+        vector_counts: Counter[str] = Counter()
 
         for token in doc:
             if not token.is_alpha or token.is_stop:
@@ -235,24 +266,50 @@ class QuijoteIndex:
             if not lemma:
                 continue
 
-            lemmas.append(lemma)
+            conteos[lemma] += 1
 
             if token.has_vector:
                 token_vector = [float(value) for value in token.vector]
-                if not vector_sum:
-                    vector_sum = [0.0] * len(token_vector)
-                for index, value in enumerate(token_vector):
-                    vector_sum[index] += value
-                token_count += 1
+                lemma_vector_sum = vector_sums.get(lemma)
+                if lemma_vector_sum is None:
+                    vector_sums[lemma] = token_vector
+                else:
+                    for index, value in enumerate(token_vector):
+                        lemma_vector_sum[index] += value
+                vector_counts[lemma] += 1
 
-        conteos = Counter(lemmas)
-        embedding = tuple(value / token_count for value in vector_sum) if token_count else tuple()
+        return _DocFeatures(
+            conteos=conteos,
+            total_terminos=sum(conteos.values()),
+            lemma_set=frozenset(conteos.keys()),
+            vector_sums=vector_sums,
+            vector_counts=vector_counts,
+        )
+
+    def _construir_analisis(self, features: _DocFeatures) -> TextAnalysis:
+        weighted_vector_sum: list[float] = []
+        total_weight = 0.0
+
+        for lemma, lemma_vector_sum in features.vector_sums.items():
+            lemma_token_count = features.vector_counts[lemma]
+            if lemma_token_count == 0:
+                continue
+
+            idf = self._idf_para_lema(lemma)
+            if not weighted_vector_sum:
+                weighted_vector_sum = [0.0] * len(lemma_vector_sum)
+
+            for index, value in enumerate(lemma_vector_sum):
+                weighted_vector_sum[index] += value * idf
+            total_weight += lemma_token_count * idf
+
+        embedding = tuple(value / total_weight for value in weighted_vector_sum) if total_weight else tuple()
         embedding_norm = math.sqrt(sum(value * value for value in embedding)) if embedding else 0.0
 
         return TextAnalysis(
-            conteos=conteos,
-            total_terminos=len(lemmas),
-            lemma_set=frozenset(conteos.keys()),
+            conteos=features.conteos,
+            total_terminos=features.total_terminos,
+            lemma_set=features.lemma_set,
             embedding=embedding,
             embedding_norm=embedding_norm,
         )

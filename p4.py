@@ -229,7 +229,6 @@ class QuijoteApp(App):
         highlighted_text = self._resaltar_texto(chunk.texto, self.current_query_analysis.lemma_set)
         self.query_one("#reader", Static).update(
             f"[b #8b0000]{escape(chunk.titulo)}[/]\n"
-            f"[dim]{escape(chunk.seccion)}[/dim]\n"
             f"{metadata}\n\n"
             f"{highlighted_text}"
         )
