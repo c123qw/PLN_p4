@@ -4,7 +4,10 @@ import os
 from pathlib import Path
 
 import spacy
+from rich.align import Align
+from rich.console import Group
 from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -32,7 +35,23 @@ class QuijoteApp(App):
     Screen { background: #f4efe1; color: #1c1b19; }
     Header { background: #8b0000; color: #fef7e6; }
     Footer { background: #2b3a42; color: #fef7e6; }
+    #title-authors {
+        height: 3;
+        content-align: center middle;
+        color: #8b0000;
+        margin-bottom: 1;
+    }
     #sidebar { width: 38%; background: #2b3a42; color: #eee8d5; border-right: solid #d4af37; }
+    #sidebar, #reader-container {
+        scrollbar-size-vertical: 1;
+        scrollbar-color: #d8c8a3;
+        scrollbar-color-hover: #cab588;
+        scrollbar-color-active: #bba06e;
+        scrollbar-background: #f6f1e4;
+        scrollbar-background-hover: #f0e9d9;
+        scrollbar-background-active: #e8ddc4;
+        scrollbar-corner-color: #f6f1e4;
+    }
     ListItem { padding: 0 1; }
     ListItem.--highlight, ListItem:hover { background: #6e1313; color: #fff8e7; }
     .inputs-container { dock: top; height: auto; background: #eee8d5; padding: 1 2; border-bottom: solid #d4af37; }
@@ -68,6 +87,11 @@ class QuijoteApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(classes="inputs-container"):
+            yield Static(
+                "[b]PLN P4 - Motor de recuperacion y RAG sobre Don Quijote[/]\n"
+                "Carlos Mantilla Mateos | Diego Alonso Arceiz",
+                id="title-authors",
+            )
             yield Input(
                 value=str(self.default_corpus_path),
                 placeholder="1. Pega la ruta del HTML del Quijote y pulsa Enter...",
@@ -227,10 +251,13 @@ class QuijoteApp(App):
         result = self.results_by_chunk_id.get(chunk_id)
         metadata = self._formatear_metadata_resultado(result)
         highlighted_text = self._resaltar_texto(chunk.texto, self.current_query_analysis.lemma_set)
+        chapter_title = Text(chunk.titulo, style="bold #8b0000", justify="center")
+        content = Text.from_markup(f"{highlighted_text}\n\n{metadata}")
         self.query_one("#reader", Static).update(
-            f"[b #8b0000]{escape(chunk.titulo)}[/]\n"
-            f"{metadata}\n\n"
-            f"{highlighted_text}"
+            Group(
+                Align.center(chapter_title, vertical="top"),
+                content,
+            )
         )
 
     def _mostrar_exploracion_inicial(self) -> None:
