@@ -1,230 +1,404 @@
-from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Static, ListItem, ListView, Input
-from textual.containers import Vertical, Horizontal, VerticalScroll
-from textual.binding import Binding
-from bs4 import BeautifulSoup
+from __future__ import annotations
+
+import os
 from pathlib import Path
-from collections import Counter
-import math
+
 import spacy
+from rich.markup import escape
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Footer, Header, Input, ListItem, ListView, Select, Static
+
+from modes.classic_mode import MODE_CLASSIC, buscar as buscar_clasico
+from modes.rag_mode import MODE_RAG, generar_respuesta_ollama, recuperar_contexto
+from modes.semantic_mode import MODE_SEMANTIC, buscar as buscar_semantico
+from preprocessing import QuijoteIndex, SearchResult, TextAnalysis
+
+
+MODE_BROWSE = "browse"
+
 
 class QuijoteApp(App):
     BINDINGS = [
         Binding("ctrl+a", "focus_file", "Cargar Archivo"),
-        Binding("ctrl+b", "focus_search", "Buscar Palabra"),
-        Binding("ctrl+q", "quit", "Salir")
+        Binding("ctrl+b", "focus_search", "Buscar"),
+        Binding("ctrl+m", "focus_mode", "Modo"),
+        Binding("ctrl+o", "focus_model", "Modelo"),
+        Binding("ctrl+q", "quit", "Salir"),
     ]
 
     CSS = """
-    Screen { background: #fdf6e3; color: #1a1a1a; }
-    #sidebar { width: 35%; background: #2b3a42; color: #eee8d5; border-right: solid #d4af37; }
-    ListItem { padding: 1; }
-    ListItem:hover { background: #8b0000; }
+    Screen { background: #f4efe1; color: #1c1b19; }
+    Header { background: #8b0000; color: #fef7e6; }
+    Footer { background: #2b3a42; color: #fef7e6; }
+    #sidebar { width: 38%; background: #2b3a42; color: #eee8d5; border-right: solid #d4af37; }
+    ListItem { padding: 0 1; }
+    ListItem.--highlight, ListItem:hover { background: #6e1313; color: #fff8e7; }
     .inputs-container { dock: top; height: auto; background: #eee8d5; padding: 1 2; border-bottom: solid #d4af37; }
-    Input { margin-bottom: 1; background: #fdf6e3; color: #1a1a1a; border: round #8b0000; }
-    Input:focus { border: round #d4af37; }
-    #reader-container { width: 65%; padding: 2 4; }
+    #search-row { height: auto; }
+    #search-input { width: 1fr; margin-right: 1; }
+    #mode-select { width: 21; margin-right: 1; }
+    #model-input { width: 28; }
+    Input, Select {
+        margin-bottom: 1;
+        background: #fdf9f0;
+        color: #1a1a1a;
+        border: round #8b0000;
+    }
+    Input:focus, Select:focus { border: round #d4af37; }
+    #reader-container { width: 62%; padding: 2 3; }
     #reader { height: auto; }
     """
 
-    def __init__(self, *args, **kwargs):
+    DISPLAY_LIMIT = 30
+
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.nlp = spacy.load("es_core_news_sm")
-        self.query_lemas = set()
-        
-        # Variables globales para TF-IDF
-        self.df_global = Counter() # En cuántos capítulos aparece cada lema
-        self.total_capitulos = 0
-
-    def obtener_lemas_y_conteos(self, texto: str) -> Counter:
-        """Devuelve un Counter con las frecuencias de cada lema en el texto."""
-        if not texto:
-            return Counter()
-        
-        doc = self.nlp(texto.lower())
-        lemas = [token.lemma_ for token in doc if token.is_alpha and not token.is_stop]
-        return Counter(lemas)
+        self.index = QuijoteIndex(self.nlp)
+        self.selected_mode = MODE_CLASSIC
+        self.current_query = ""
+        self.current_query_analysis = TextAnalysis.empty()
+        self.current_results: list[SearchResult] = []
+        self.results_by_chunk_id: dict[int, SearchResult] = {}
+        self.default_rag_model = os.getenv("P4_OLLAMA_MODEL", "qwen3:0.6b")
+        self.default_corpus_path = Path(__file__).with_name("2000-h.htm")
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(classes="inputs-container"):
-            yield Input(placeholder="1. Pega la ruta del archivo HTML y pulsa Enter...", id="file-input")
-            yield Input(placeholder="2. Escribe tu búsqueda (ej. 'gigantes' o 'Sancho')...", id="search-input")
+            yield Input(
+                value=str(self.default_corpus_path),
+                placeholder="1. Pega la ruta del HTML del Quijote y pulsa Enter...",
+                id="file-input",
+            )
+            with Horizontal(id="search-row"):
+                yield Input(
+                    placeholder="2. Escribe tu consulta y pulsa Enter...",
+                    id="search-input",
+                )
+                yield Select(
+                    [
+                        ("1. Clásica", MODE_CLASSIC),
+                        ("2. Semántica", MODE_SEMANTIC),
+                        ("3. RAG", MODE_RAG),
+                    ],
+                    value=MODE_CLASSIC,
+                    allow_blank=False,
+                    prompt="Modo",
+                    id="mode-select",
+                )
+                yield Input(
+                    value=self.default_rag_model,
+                    placeholder="Modelo Ollama",
+                    id="model-input",
+                )
         with Horizontal():
             yield ListView(id="sidebar")
             with VerticalScroll(id="reader-container"):
-                yield Static("[b #8b0000]¡Bienvenido![/]\n[i]Carga tu archivo del Quijote.[/i]", id="reader", expand=True)
+                yield Static(
+                    "[b #8b0000]Quijote IR[/]\n\n"
+                    "Carga el HTML, elige el modo y, si usas RAG, indica el modelo de Ollama.",
+                    id="reader",
+                    expand=True,
+                )
         yield Footer()
+
+    def on_mount(self) -> None:
+        if not self.default_corpus_path.exists():
+            self.query_one("#reader", Static).update(
+                "[b red]No se encontró el corpus por defecto.[/b red]\n\n"
+                f"Ruta esperada: {escape(str(self.default_corpus_path))}"
+            )
+            return
+
+        self.cargar_archivo(str(self.default_corpus_path))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "file-input":
             self.cargar_archivo(event.value)
-        elif event.input.id == "search-input":
+            return
+
+        if event.input.id == "search-input":
             self.ejecutar_busqueda(event.value)
+            return
+
+        if event.input.id == "model-input":
+            self.actualizar_modelo_ollama(event.value)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "mode-select":
+            return
+
+        self.selected_mode = str(event.value)
+        if self.current_query and self.index.total_chunks > 0:
+            self.ejecutar_busqueda(self.current_query)
 
     def cargar_archivo(self, ruta_str: str) -> None:
-        path = Path(ruta_str.strip())
+        normalized_path = ruta_str.strip() or str(self.default_corpus_path)
+        path = Path(normalized_path)
         reader = self.query_one("#reader", Static)
-        
+        self.query_one("#file-input", Input).value = str(path)
+
         if not path.exists():
-            reader.update(f"[b red]Error:[/b red] No se encontró el archivo en: {path}")
+            reader.update(f"[b red]Error:[/b red] No se encontró el archivo en {escape(str(path))}.")
             return
 
-        reader.update("[i]Procesando libro y calculando frecuencias TF-IDF...[/i]")
-        
+        reader.update("[i]Procesando HTML, construyendo chunks y calculando índices...[/i]")
+
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                soup = BeautifulSoup(f, "html.parser")
-            
-            self.capitulos_datos = []
-            self.df_global.clear()
-            id_original = 0
-            
-            capitulo_actual_titulo = "Prólogo / Inicio"
-            capitulo_actual_texto = []
-            
-            elementos = soup.find_all(['h1', 'h2', 'h3', 'h4', 'p'])
-            
-            def guardar_capitulo(titulo, texto_lineas, id_cap):
-                texto_completo = "\n\n".join(texto_lineas)
-                conteos = self.obtener_lemas_y_conteos(texto_completo)
-                
-                # Actualizamos el Document Frequency (DF) global
-                for lema in conteos.keys():
-                    self.df_global[lema] += 1
-                    
-                self.capitulos_datos.append({
-                    "id": id_cap,
-                    "titulo": titulo,
-                    "texto": texto_completo,
-                    "conteos": conteos,
-                    "total_palabras": sum(conteos.values())
-                })
-            
-            for el in elementos:
-                texto = el.get_text(strip=True)
-                if not texto: continue
-                
-                texto_upper = texto.upper()
-                es_titulo = (el.name in ['h1', 'h2', 'h3']) or texto_upper.startswith("CAPÍTULO") or texto_upper.startswith("CAPITULO")
-                
-                if es_titulo:
-                    if capitulo_actual_texto:
-                        guardar_capitulo(capitulo_actual_titulo, capitulo_actual_texto, id_original)
-                        id_original += 1
-                    capitulo_actual_titulo = texto[:45] + "..." if len(texto) > 45 else texto
-                    capitulo_actual_texto = []
-                else:
-                    capitulo_actual_texto.append(texto)
-            
-            if capitulo_actual_texto:
-                guardar_capitulo(capitulo_actual_titulo, capitulo_actual_texto, id_original)
-                
-            self.total_capitulos = len(self.capitulos_datos)
-            self.query_lemas = set()
-            self.actualizar_sidebar()
-            reader.update(f"[b #8b0000]¡Archivo procesado![/]\nSe indexaron {self.total_capitulos} secciones para TF-IDF.")
-            
-        except Exception as e:
-            reader.update(f"Error: {e}")
-
-    def calcular_score_tfidf(self, capitulo) -> float:
-        """Calcula la relevancia de un capítulo basado en los lemas buscados."""
-        score_total = 0.0
-        for lema in self.query_lemas:
-            # TF: (frecuencia del término en el capítulo) / (total de palabras del capítulo)
-            tf = capitulo["conteos"].get(lema, 0) / capitulo["total_palabras"] if capitulo["total_palabras"] > 0 else 0
-            
-            # IDF: log(N / DF). Sumamos 1 al DF para evitar divisiones por cero por si acaso
-            df = self.df_global.get(lema, 0)
-            idf = math.log(self.total_capitulos / (1 + df)) if self.total_capitulos > 0 else 0
-            
-            score_total += (tf * idf)
-            
-        return score_total
-
-    def actualizar_sidebar(self, resultados_ordenados=None) -> int:
-        sidebar = self.query_one("#sidebar", ListView)
-        sidebar.clear()
-        
-        # Si no hay búsqueda, mostramos todos en orden original
-        if resultados_ordenados is None:
-            for cap in self.capitulos_datos:
-                sidebar.append(ListItem(Static(cap["titulo"]), name=str(cap["id"])))
-            return len(self.capitulos_datos)
-        
-        # Si hay búsqueda, mostramos los ordenados por TF-IDF
-        for cap, score in resultados_ordenados:
-            titulo_con_score = f"[{score:.4f}] {cap['titulo']}"
-            sidebar.append(ListItem(Static(titulo_con_score), name=str(cap["id"])))
-            
-        return len(resultados_ordenados)
-
-    def ejecutar_busqueda(self, palabra: str) -> None:
-        if not hasattr(self, 'capitulos_datos'):
-            return
-            
-        self.query_lemas = set(self.obtener_lemas_y_conteos(palabra).keys())
-        reader = self.query_one("#reader", Static)
-        
-        if not self.query_lemas:
-            self.actualizar_sidebar()
-            reader.update("Mostrando todos los capítulos.")
+            stats = self.index.cargar_archivo(path)
+        except Exception as exc:
+            reader.update(f"[b red]Error al procesar el archivo:[/b red] {escape(str(exc))}")
             return
 
-        # Calculamos TF-IDF para cada capítulo
-        resultados = []
-        for cap in self.capitulos_datos:
-            score = self.calcular_score_tfidf(cap)
-            if score > 0: # Solo guardamos si hay alguna coincidencia
-                resultados.append((cap, score))
-                
-        # Ordenamos de mayor a menor score
-        resultados.sort(key=lambda x: x[1], reverse=True)
-        
-        num_resultados = self.actualizar_sidebar(resultados)
-        
-        if num_resultados > 0:
-            reader.update(f"[b green]Búsqueda inteligente aplicada.[/]\n\nSe encontraron {num_resultados} capítulos.\nLos resultados en la barra lateral están ordenados por relevancia (TF-IDF).")
-        else:
-            reader.update("No se encontraron coincidencias relevantes.")
+        self.current_query = ""
+        self.current_query_analysis = TextAnalysis.empty()
+        self._mostrar_exploracion_inicial()
+        reader.update(
+            "[b #8b0000]Corpus indexado[/]\n\n"
+            f"Secciones detectadas: {stats['sections']}\n"
+            f"Pasajes indexados: {stats['chunks']}\n"
+            f"Tamaño de chunk: {self.index.chunk_size_words} palabras\n"
+            f"Overlap: {self.index.chunk_overlap_words} palabras\n"
+            f"Modelo Ollama actual: {escape(self._obtener_modelo_ollama())}\n\n"
+            "Escribe una consulta para buscar."
+        )
+
+    def ejecutar_busqueda(self, consulta: str) -> None:
+        if self.index.total_chunks == 0:
+            self.query_one("#reader", Static).update(
+                "[b red]Antes debes cargar el HTML del Quijote.[/b red]"
+            )
+            return
+
+        self.current_query = consulta.strip()
+        if not self.current_query:
+            self.current_query_analysis = TextAnalysis.empty()
+            self._mostrar_exploracion_inicial()
+            self.query_one("#reader", Static).update(
+                "Consulta vacía. Mostrando una selección inicial de pasajes."
+            )
+            return
+
+        if self.selected_mode == MODE_CLASSIC:
+            query_analysis, resultados = buscar_clasico(self.index, self.current_query)
+            self.current_query_analysis = query_analysis
+            self._actualizar_sidebar(resultados[: self.DISPLAY_LIMIT])
+            self._mostrar_resumen_clasico(resultados)
+            return
+
+        if self.selected_mode == MODE_SEMANTIC:
+            query_analysis, resultados = buscar_semantico(self.index, self.current_query)
+            self.current_query_analysis = query_analysis
+            self._actualizar_sidebar(resultados[: self.DISPLAY_LIMIT])
+            self._mostrar_resumen_semantico(resultados)
+            return
+
+        query_analysis, fusion, clasicos, semanticos = recuperar_contexto(self.index, self.current_query)
+        self.current_query_analysis = query_analysis
+        self._actualizar_sidebar(fusion)
+        self._mostrar_respuesta_rag(fusion, clasicos, semanticos)
+
+    def actualizar_modelo_ollama(self, modelo: str) -> None:
+        normalized = modelo.strip() or self.default_rag_model
+        model_input = self.query_one("#model-input", Input)
+        model_input.value = normalized
+
+        if self.selected_mode == MODE_RAG and self.current_query and self.index.total_chunks > 0:
+            self.ejecutar_busqueda(self.current_query)
+            return
+
+        self.query_one("#reader", Static).update(
+            "[b #8b0000]Modelo de Ollama actualizado[/]\n\n"
+            f"Modelo actual: {escape(normalized)}"
+        )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        # Recuperamos el ID original que guardamos en la propiedad 'name'
-        idx = int(event.item.name)
-        capitulo = self.capitulos_datos[idx]
-        
-        texto_a_mostrar = capitulo["texto"]
-        
-        # Lógica de resaltado (igual que antes)
-        if self.query_lemas:
-            parrafos = texto_a_mostrar.split("\n\n")
-            parrafos_filtrados = []
-            
-            for p in parrafos:
-                doc = self.nlp(p)
-                p_lemas = {t.lemma_.lower() for t in doc if t.is_alpha and not t.is_stop}
-                if not self.query_lemas.isdisjoint(p_lemas):
-                    p_resaltado = ""
-                    for token in doc:
-                        lemma = token.lemma_.lower()
-                        if token.is_alpha and not token.is_stop and lemma in self.query_lemas:
-                            p_resaltado += f"[b #8b0000 on #d4af37]{token.text}[/]{token.whitespace_}"
-                        else:
-                            p_resaltado += token.text_with_ws
-                    parrafos_filtrados.append(p_resaltado)
-            
-            texto_a_mostrar = "\n\n[dim]...[/dim]\n\n".join(parrafos_filtrados)
-            texto_a_mostrar = f"[italic #d4af37]Mostrando solo párrafos relevantes:[/]\n\n" + texto_a_mostrar
+        if event.item is None or event.item.name is None:
+            return
 
+        chunk_id = int(event.item.name)
+        chunk = self.index.chunk_by_id.get(chunk_id)
+        if chunk is None:
+            return
+
+        result = self.results_by_chunk_id.get(chunk_id)
+        metadata = self._formatear_metadata_resultado(result)
+        highlighted_text = self._resaltar_texto(chunk.texto, self.current_query_analysis.lemma_set)
+        self.query_one("#reader", Static).update(
+            f"[b #8b0000]{escape(chunk.titulo)}[/]\n"
+            f"[dim]{escape(chunk.seccion)}[/dim]\n"
+            f"{metadata}\n\n"
+            f"{highlighted_text}"
+        )
+
+    def _mostrar_exploracion_inicial(self) -> None:
+        initial = [
+            SearchResult(chunk=chunk, score=0.0, modo=MODE_BROWSE)
+            for chunk in self.index.chunks[: self.DISPLAY_LIMIT]
+        ]
+        self._actualizar_sidebar(initial)
+
+    def _actualizar_sidebar(self, resultados: list[SearchResult]) -> None:
+        sidebar = self.query_one("#sidebar", ListView)
+        sidebar.clear()
+
+        self.current_results = resultados
+        self.results_by_chunk_id = {result.chunk.chunk_id: result for result in resultados}
+
+        for result in resultados:
+            label = self._formatear_label_sidebar(result)
+            sidebar.append(ListItem(Static(label), name=str(result.chunk.chunk_id)))
+
+    def _mostrar_resumen_clasico(self, resultados: list[SearchResult]) -> None:
         reader = self.query_one("#reader", Static)
-        reader.update(f"[b #8b0000]{capitulo['titulo']}[/]\n\n{texto_a_mostrar}")
+        if not self.current_query_analysis.lemma_set:
+            reader.update(
+                "La consulta no contiene términos útiles tras eliminar stopwords. "
+                "Prueba con nombres o conceptos más informativos."
+            )
+            return
+
+        if not resultados:
+            reader.update(
+                "[b red]Sin resultados clásicos.[/b red]\n\n"
+                f"Consulta lematizada: {', '.join(sorted(self.current_query_analysis.lemma_set))}"
+            )
+            return
+
+        shown = min(len(resultados), self.DISPLAY_LIMIT)
+        reader.update(
+            "[b #8b0000]Búsqueda clásica[/]\n\n"
+            f"Consulta lematizada: {', '.join(sorted(self.current_query_analysis.lemma_set))}\n"
+            f"Resultados recuperados: {len(resultados)}\n"
+            f"Mostrando: {shown}\n\n"
+            "Selecciona un pasaje en la barra lateral para ver el texto con los lemas resaltados."
+        )
+
+    def _mostrar_resumen_semantico(self, resultados: list[SearchResult]) -> None:
+        reader = self.query_one("#reader", Static)
+        if self.current_query_analysis.embedding_norm == 0:
+            reader.update(
+                "La consulta no generó un embedding útil. "
+                "Prueba con una frase con contenido léxico más claro."
+            )
+            return
+
+        if not resultados:
+            reader.update("[b red]Sin resultados semánticos.[/b red]")
+            return
+
+        shown = min(len(resultados), self.DISPLAY_LIMIT)
+        reader.update(
+            "[b #8b0000]Búsqueda semántica[/]\n\n"
+            f"Pasajes ordenados por similitud coseno con el embedding de la consulta.\n"
+            f"Mostrando top: {shown}\n"
+            f"Mejor score: {resultados[0].score:.4f}\n\n"
+            "Selecciona un pasaje para inspeccionar el texto recuperado."
+        )
+
+    def _mostrar_respuesta_rag(
+        self,
+        fusion: list[SearchResult],
+        clasicos: list[SearchResult],
+        semanticos: list[SearchResult],
+    ) -> None:
+        reader = self.query_one("#reader", Static)
+        modelo = self._obtener_modelo_ollama()
+
+        if not fusion:
+            reader.update("[b red]RAG sin contexto suficiente.[/b red]")
+            return
+
+        try:
+            answer = generar_respuesta_ollama(self.current_query, fusion, modelo)
+        except Exception as exc:
+            reader.update(
+                "[b #8b0000]Contexto RAG recuperado[/]\n\n"
+                "No se pudo generar la respuesta con Ollama.\n"
+                f"Motivo: {escape(str(exc))}\n\n"
+                f"Modelo seleccionado: {escape(modelo)}\n"
+                f"Pasajes fusionados: {len(fusion)}\n"
+                f"Top clásicos usados: {len(clasicos)}\n"
+                f"Top semánticos usados: {len(semanticos)}\n\n"
+                "Los pasajes de apoyo siguen disponibles en la barra lateral."
+            )
+            return
+
+        referencias = ", ".join(f"C{result.chunk.chunk_id}" for result in fusion)
+        reader.update(
+            "[b #8b0000]Respuesta RAG[/]\n\n"
+            f"Modelo: {escape(modelo)}\n\n"
+            f"{escape(answer)}\n\n"
+            f"[dim]Referencias disponibles en la barra lateral: {escape(referencias)}[/dim]"
+        )
+
+    def _obtener_modelo_ollama(self) -> str:
+        model_input = self.query_one("#model-input", Input)
+        modelo = model_input.value.strip()
+        if not modelo:
+            modelo = self.default_rag_model
+            model_input.value = modelo
+        return modelo
+
+    def _resaltar_texto(self, texto: str, query_lemmas: frozenset[str]) -> str:
+        if not query_lemmas:
+            return escape(texto)
+
+        doc = self.nlp(texto)
+        highlighted_parts: list[str] = []
+        for token in doc:
+            escaped_text = escape(token.text)
+            lemma = token.lemma_.lower()
+            if token.is_alpha and not token.is_stop and lemma in query_lemmas:
+                highlighted_parts.append(f"[b #8b0000 on #d4af37]{escaped_text}[/]{token.whitespace_}")
+            else:
+                highlighted_parts.append(f"{escaped_text}{token.whitespace_}")
+
+        return "".join(highlighted_parts)
+
+    def _formatear_label_sidebar(self, result: SearchResult) -> str:
+        title = escape(self._truncar(result.chunk.titulo, 54))
+        if result.modo == MODE_CLASSIC:
+            return f"[{result.score:.4f}] C{result.chunk.chunk_id:03d} · {title}"
+        if result.modo == MODE_SEMANTIC:
+            return f"[cos {result.score:.4f}] C{result.chunk.chunk_id:03d} · {title}"
+        if result.modo == MODE_RAG:
+            return f"[rrf {result.score:.4f}] C{result.chunk.chunk_id:03d} · {title}"
+        return f"C{result.chunk.chunk_id:03d} · {title}"
+
+    def _formatear_metadata_resultado(self, result: SearchResult | None) -> str:
+        if result is None or result.modo == MODE_BROWSE:
+            return "[dim]Exploración manual del corpus.[/dim]"
+        if result.modo == MODE_CLASSIC:
+            return f"[dim]TF-IDF: {result.score:.4f}[/dim]"
+        if result.modo == MODE_SEMANTIC:
+            return f"[dim]Similitud coseno: {result.score:.4f}[/dim]"
+        return (
+            "[dim]"
+            f"RRF: {result.score:.4f} | "
+            f"clásico: {result.clasico_score:.4f} | "
+            f"semántico: {result.semantico_score:.4f}"
+            "[/dim]"
+        )
+
+    def _truncar(self, texto: str, max_chars: int) -> str:
+        return texto if len(texto) <= max_chars else f"{texto[: max_chars - 1]}…"
 
     def action_focus_file(self) -> None:
-        self.query_one("#file-input").focus()
+        self.query_one("#file-input", Input).focus()
 
     def action_focus_search(self) -> None:
-        self.query_one("#search-input").focus()
+        self.query_one("#search-input", Input).focus()
+
+    def action_focus_mode(self) -> None:
+        self.query_one("#mode-select", Select).focus()
+
+    def action_focus_model(self) -> None:
+        self.query_one("#model-input", Input).focus()
+
 
 if __name__ == "__main__":
     QuijoteApp().run()
