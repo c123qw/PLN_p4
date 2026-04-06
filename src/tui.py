@@ -67,11 +67,11 @@ class QuijoteApp(App):
     Footer { background: #2b3a42; color: #fef7e6; }
     #main-body { height: 1fr; }
     #top-panel {
-        height: 1fr;
-        min-height: 16;
+        height: 30%;
+        min-height: 9;
         background: #eee8d5;
         border-bottom: solid #d4af37;
-        padding: 1 2;
+        padding: 0 1;
     }
     #top-left {
         width: 1fr;
@@ -83,68 +83,70 @@ class QuijoteApp(App):
         height: 1fr;
     }
     #brand-block {
-        height: 1fr;
-        content-align: left middle;
-        padding-left: 1;
+        height: auto;
+        content-align: left top;
+        padding-left: 0;
+        margin-bottom: 0;
     }
     #brand-title {
         color: #7f1010;
-        text-style: bold;
+        text-style: none;
     }
     #brand-authors { color: #705f48; }
     .field-card {
         background: #f7f1e2;
         border: round #a33838;
-        padding: 0 1;
+        padding: 0;
         margin-bottom: 0;
     }
     .field-label {
         height: 1;
-        margin-left: 1;
+        margin-left: 0;
         color: #6d5a3d;
     }
     #search-row {
-        height: auto;
+        height: 4;
         align-vertical: top;
-        margin-top: 1;
+        margin-top: 0;
     }
     #mode-field, #model-field {
         width: 1fr;
-        height: 6;
+        height: 4;
     }
     #mode-field { margin-right: 1; }
     #file-field {
-        height: 5;
-        margin-bottom: 1;
+        height: auto;
+        margin-bottom: 0;
     }
     #query-field {
-        height: 7;
-        border: round #8f2626;
+        height: auto;
+        min-height: 4;
         background: #f9f2df;
     }
     #query-field .field-label {
-        color: #7f1010;
-        text-style: bold;
+        color: #6d5a3d;
+        text-style: none;
     }
     #file-input, #search-input, #mode-select, #model-input { width: 1fr; }
     Input {
-        height: 3;
+        height: 1;
         margin: 0;
+        padding: 0;
         background: #fffaf0;
         color: #1a1a1a;
-        border: round #8f2626;
+        border: none;
     }
-    Input:hover { border: round #a33a3a; }
+    Input:hover { border: none; background: #fff8ec; }
     Input:focus {
-        border: round #d4af37;
+        border: none;
         background: #fffdf7;
     }
     #search-input {
-        border: round #9e3030;
+        border: none;
         background: #fffdf4;
     }
     #search-input:focus {
-        border: round #d4af37;
+        border: none;
         background: #fffef8;
     }
     Select {
@@ -165,24 +167,24 @@ class QuijoteApp(App):
         border: none;
     }
     #mode-select > SelectCurrent {
-        height: 3;
+        height: 1;
         background: #fffaf0;
         color: #1a1a1a;
-        border: round #8f2626;
-        padding: 0 1;
+        border: none;
+        padding: 0;
     }
     #mode-select > SelectCurrent:ansi {
-        height: 3;
+        height: 1;
         background: #fffaf0;
         color: #1a1a1a;
-        border: round #8f2626;
+        border: none;
     }
     #mode-select > SelectCurrent:hover {
         background: #fffaf0;
     }
     #mode-select:focus > SelectCurrent {
         background: #fffdf7;
-        border: round #d4af37;
+        border: none;
     }
     #mode-select > SelectCurrent Static#label {
         color: #6d5a3d;
