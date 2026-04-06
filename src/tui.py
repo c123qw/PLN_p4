@@ -65,11 +65,139 @@ class QuijoteApp(App):
     Screen { background: #f4efe1; color: #1c1b19; }
     Header { background: #8b0000; color: #fef7e6; }
     Footer { background: #2b3a42; color: #fef7e6; }
-    #title-authors {
-        height: 3;
+    #top-panel {
+        dock: top;
+        height: auto;
+        background: #eee8d5;
+        border-bottom: solid #d4af37;
+        padding: 1 2;
+    }
+    #brand-block {
+        height: auto;
         content-align: center middle;
-        color: #8b0000;
         margin-bottom: 1;
+    }
+    #brand-title {
+        color: #7f1010;
+        text-style: bold;
+    }
+    #brand-authors { color: #705f48; }
+    #inputs-panel { height: auto; }
+    .field-card {
+        height: 6;
+        background: #f7f1e2;
+        border: round #a33838;
+        padding: 0 1;
+        margin-bottom: 0;
+    }
+    .field-label {
+        height: 1;
+        margin-left: 1;
+        color: #6d5a3d;
+    }
+    #search-row {
+        height: auto;
+        align-vertical: top;
+    }
+    #file-field {
+        width: 1fr;
+        margin-bottom: 1;
+    }
+    #query-field {
+        width: 1fr;
+        height: 6;
+        margin-right: 1;
+    }
+    #mode-field {
+        width: 24;
+        height: 6;
+        margin-right: 1;
+    }
+    #model-field {
+        width: 30;
+        height: 6;
+    }
+    #file-input, #search-input, #mode-select, #model-input { width: 1fr; }
+    Input {
+        height: 3;
+        margin: 0;
+        background: #fffaf0;
+        color: #1a1a1a;
+        border: round #8f2626;
+    }
+    Input:hover { border: round #a33a3a; }
+    Input:focus {
+        border: round #d4af37;
+        background: #fffdf7;
+    }
+    Select {
+        height: auto;
+        margin: 0;
+        background: transparent;
+        color: #1a1a1a;
+        border: none;
+    }
+    Select:hover, Select:focus {
+        border: none;
+        background: transparent;
+    }
+    #mode-select {
+        height: auto;
+        background: #fffaf0;
+        color: #1a1a1a;
+        border: none;
+    }
+    #mode-select > SelectCurrent {
+        height: 3;
+        background: #fffaf0;
+        color: #1a1a1a;
+        border: round #8f2626;
+        padding: 0 1;
+    }
+    #mode-select > SelectCurrent:ansi {
+        height: 3;
+        background: #fffaf0;
+        color: #1a1a1a;
+        border: round #8f2626;
+    }
+    #mode-select > SelectCurrent:hover {
+        background: #fffaf0;
+    }
+    #mode-select:focus > SelectCurrent {
+        background: #fffdf7;
+        border: round #d4af37;
+    }
+    #mode-select > SelectCurrent Static#label {
+        color: #6d5a3d;
+        background: transparent;
+    }
+    #mode-select > SelectCurrent.-has-value Static#label {
+        color: #1a1a1a;
+    }
+    #mode-select > SelectCurrent .arrow {
+        color: #705f48;
+        background: transparent;
+    }
+    #mode-select > SelectOverlay {
+        background: #fffaf0;
+        color: #1a1a1a;
+        border: round #8f2626;
+    }
+    #mode-select > SelectOverlay:focus {
+        border: round #d4af37;
+        background: #fffdf7;
+    }
+    #mode-select > SelectOverlay > .option-list--option {
+        color: #1a1a1a;
+        background: #fffaf0;
+    }
+    #mode-select > SelectOverlay > .option-list--option-hover {
+        color: #1a1a1a;
+        background: #f5ebd3;
+    }
+    #mode-select > SelectOverlay > .option-list--option-highlighted {
+        color: #7f1010;
+        background: #f3e6c6;
     }
     #sidebar { width: 38%; background: #2b3a42; color: #eee8d5; border-right: solid #d4af37; }
     #sidebar, #reader-container {
@@ -84,18 +212,6 @@ class QuijoteApp(App):
     }
     ListItem { padding: 0 1; }
     ListItem.--highlight, ListItem:hover { background: #6e1313; color: #fff8e7; }
-    .inputs-container { dock: top; height: auto; background: #eee8d5; padding: 1 2; border-bottom: solid #d4af37; }
-    #search-row { height: auto; }
-    #search-input { width: 1fr; margin-right: 1; }
-    #mode-select { width: 21; margin-right: 1; }
-    #model-input { width: 28; }
-    Input, Select {
-        margin-bottom: 1;
-        background: #fdf9f0;
-        color: #1a1a1a;
-        border: round #8b0000;
-    }
-    Input:focus, Select:focus { border: round #d4af37; }
     #reader-container { width: 62%; padding: 2 3; }
     #reader { height: auto; }
     """
@@ -133,38 +249,51 @@ class QuijoteApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Vertical(classes="inputs-container"):
-            yield Static(
-                "[b]PLN P4 - Motor de recuperacion y RAG sobre Don Quijote[/]\n"
-                "Carlos Mantilla Mateos | Diego Alonso Arceiz",
-                id="title-authors",
-            )
-            yield Input(
-                value=str(self.default_corpus_path),
-                placeholder="1. Pega la ruta del HTML del Quijote y pulsa Enter...",
-                id="file-input",
-            )
-            with Horizontal(id="search-row"):
-                yield Input(
-                    placeholder="2. Escribe tu consulta y pulsa Enter...",
-                    id="search-input",
+        with Vertical(id="top-panel"):
+            with Vertical(id="brand-block"):
+                yield Static(
+                    "PLN P4 - Motor de recuperacion y RAG sobre Don Quijote",
+                    id="brand-title",
                 )
-                yield Select(
-                    [
-                        ("1. Clasica", MODE_CLASSIC),
-                        ("2. Semantica", MODE_SEMANTIC),
-                        ("3. RAG", MODE_RAG),
-                    ],
-                    value=MODE_CLASSIC,
-                    allow_blank=False,
-                    prompt="Modo",
-                    id="mode-select",
+                yield Static(
+                    "Carlos Mantilla Mateos | Diego Alonso Arceiz",
+                    id="brand-authors",
                 )
-                yield Input(
-                    value=self.default_rag_model,
-                    placeholder="Modelo Ollama",
-                    id="model-input",
-                )
+            with Vertical(id="inputs-panel"):
+                with Vertical(classes="field-card", id="file-field"):
+                    yield Static("Archivo (Ctrl+A)", classes="field-label")
+                    yield Input(
+                        value=str(self.default_corpus_path),
+                        placeholder="Pega la ruta del HTML del Quijote y pulsa Enter...",
+                        id="file-input",
+                    )
+                with Horizontal(id="search-row"):
+                    with Vertical(classes="field-card", id="query-field"):
+                        yield Static("Consulta (Ctrl+B)", classes="field-label")
+                        yield Input(
+                            placeholder="Escribe tu consulta y pulsa Enter...",
+                            id="search-input",
+                        )
+                    with Vertical(classes="field-card", id="mode-field"):
+                        yield Static("Modo (Ctrl+M)", classes="field-label")
+                        yield Select(
+                            [
+                                ("1. Clasica", MODE_CLASSIC),
+                                ("2. Semantica", MODE_SEMANTIC),
+                                ("3. RAG", MODE_RAG),
+                            ],
+                            value=MODE_CLASSIC,
+                            allow_blank=False,
+                            prompt="Modo",
+                            id="mode-select",
+                        )
+                    with Vertical(classes="field-card", id="model-field"):
+                        yield Static("Modelo (Ctrl+O)", classes="field-label")
+                        yield Input(
+                            value=self.default_rag_model,
+                            placeholder="Modelo Ollama (ej. qwen3:0.6b)",
+                            id="model-input",
+                        )
         with Horizontal():
             yield ListView(id="sidebar")
             with VerticalScroll(id="reader-container"):
