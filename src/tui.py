@@ -65,26 +65,34 @@ class QuijoteApp(App):
     Screen { background: #f4efe1; color: #1c1b19; }
     Header { background: #8b0000; color: #fef7e6; }
     Footer { background: #2b3a42; color: #fef7e6; }
+    #main-body { height: 1fr; }
     #top-panel {
-        dock: top;
-        height: auto;
+        height: 1fr;
+        min-height: 16;
         background: #eee8d5;
         border-bottom: solid #d4af37;
         padding: 1 2;
     }
+    #top-left {
+        width: 1fr;
+        margin-right: 1;
+        height: 1fr;
+    }
+    #top-right {
+        width: 2fr;
+        height: 1fr;
+    }
     #brand-block {
-        height: auto;
-        content-align: center middle;
-        margin-bottom: 1;
+        height: 1fr;
+        content-align: left middle;
+        padding-left: 1;
     }
     #brand-title {
         color: #7f1010;
         text-style: bold;
     }
     #brand-authors { color: #705f48; }
-    #inputs-panel { height: auto; }
     .field-card {
-        height: 6;
         background: #f7f1e2;
         border: round #a33838;
         padding: 0 1;
@@ -98,24 +106,25 @@ class QuijoteApp(App):
     #search-row {
         height: auto;
         align-vertical: top;
+        margin-top: 1;
     }
-    #file-field {
+    #mode-field, #model-field {
         width: 1fr;
+        height: 6;
+    }
+    #mode-field { margin-right: 1; }
+    #file-field {
+        height: 5;
         margin-bottom: 1;
     }
     #query-field {
-        width: 1fr;
-        height: 6;
-        margin-right: 1;
+        height: 7;
+        border: round #8f2626;
+        background: #f9f2df;
     }
-    #mode-field {
-        width: 24;
-        height: 6;
-        margin-right: 1;
-    }
-    #model-field {
-        width: 30;
-        height: 6;
+    #query-field .field-label {
+        color: #7f1010;
+        text-style: bold;
     }
     #file-input, #search-input, #mode-select, #model-input { width: 1fr; }
     Input {
@@ -129,6 +138,14 @@ class QuijoteApp(App):
     Input:focus {
         border: round #d4af37;
         background: #fffdf7;
+    }
+    #search-input {
+        border: round #9e3030;
+        background: #fffdf4;
+    }
+    #search-input:focus {
+        border: round #d4af37;
+        background: #fffef8;
     }
     Select {
         height: auto;
@@ -199,6 +216,15 @@ class QuijoteApp(App):
         color: #7f1010;
         background: #f3e6c6;
     }
+    #model-field.model-hidden {
+        border: none;
+        background: transparent;
+    }
+    #model-field.model-hidden .field-label,
+    #model-field.model-hidden #model-input {
+        display: none;
+    }
+    #output-panel { height: 2fr; }
     #sidebar { width: 38%; background: #2b3a42; color: #eee8d5; border-right: solid #d4af37; }
     #sidebar, #reader-container {
         scrollbar-size-vertical: 1;
@@ -249,61 +275,63 @@ class QuijoteApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Vertical(id="top-panel"):
-            with Vertical(id="brand-block"):
-                yield Static(
-                    "PLN P4 - Motor de recuperacion y RAG sobre Don Quijote",
-                    id="brand-title",
-                )
-                yield Static(
-                    "Carlos Mantilla Mateos | Diego Alonso Arceiz",
-                    id="brand-authors",
-                )
-            with Vertical(id="inputs-panel"):
-                with Vertical(classes="field-card", id="file-field"):
-                    yield Static("Archivo (Ctrl+A)", classes="field-label")
-                    yield Input(
-                        value=str(self.default_corpus_path),
-                        placeholder="Pega la ruta del HTML del Quijote y pulsa Enter...",
-                        id="file-input",
-                    )
-                with Horizontal(id="search-row"):
+        with Vertical(id="main-body"):
+            with Horizontal(id="top-panel"):
+                with Vertical(id="top-left"):
+                    with Vertical(id="brand-block"):
+                        yield Static(
+                            "PLN P4 - Motor de recuperacion y RAG sobre Don Quijote",
+                            id="brand-title",
+                        )
+                        yield Static(
+                            "Carlos Mantilla Mateos | Diego Alonso Arceiz",
+                            id="brand-authors",
+                        )
+                    with Horizontal(id="search-row"):
+                        with Vertical(classes="field-card", id="mode-field"):
+                            yield Static("Modo (Ctrl+M)", classes="field-label")
+                            yield Select(
+                                [
+                                    ("1. Clasica", MODE_CLASSIC),
+                                    ("2. Semantica", MODE_SEMANTIC),
+                                    ("3. RAG", MODE_RAG),
+                                ],
+                                value=MODE_CLASSIC,
+                                allow_blank=False,
+                                prompt="Modo",
+                                id="mode-select",
+                            )
+                        with Vertical(classes="field-card model-hidden", id="model-field"):
+                            yield Static("Modelo (Ctrl+O)", classes="field-label")
+                            yield Input(
+                                value=self.default_rag_model,
+                                placeholder="Modelo Ollama (ej. qwen3:0.6b)",
+                                id="model-input",
+                            )
+                with Vertical(id="top-right"):
+                    with Vertical(classes="field-card", id="file-field"):
+                        yield Static("Archivo (Ctrl+A)", classes="field-label")
+                        yield Input(
+                            value=str(self.default_corpus_path),
+                            placeholder="Pega la ruta del HTML del Quijote y pulsa Enter...",
+                            id="file-input",
+                        )
                     with Vertical(classes="field-card", id="query-field"):
                         yield Static("Consulta (Ctrl+B)", classes="field-label")
                         yield Input(
                             placeholder="Escribe tu consulta y pulsa Enter...",
                             id="search-input",
                         )
-                    with Vertical(classes="field-card", id="mode-field"):
-                        yield Static("Modo (Ctrl+M)", classes="field-label")
-                        yield Select(
-                            [
-                                ("1. Clasica", MODE_CLASSIC),
-                                ("2. Semantica", MODE_SEMANTIC),
-                                ("3. RAG", MODE_RAG),
-                            ],
-                            value=MODE_CLASSIC,
-                            allow_blank=False,
-                            prompt="Modo",
-                            id="mode-select",
-                        )
-                    with Vertical(classes="field-card", id="model-field"):
-                        yield Static("Modelo (Ctrl+O)", classes="field-label")
-                        yield Input(
-                            value=self.default_rag_model,
-                            placeholder="Modelo Ollama (ej. qwen3:0.6b)",
-                            id="model-input",
-                        )
-        with Horizontal():
-            yield ListView(id="sidebar")
-            with VerticalScroll(id="reader-container"):
-                yield Static(
-                    "[b #8b0000]Quijote IR[/]\n\n"
-                    "Arranque inmediato activado.\n"
-                    "Pulsa Enter en la ruta para indexar o lanza una consulta para iniciar carga bajo demanda.",
-                    id="reader",
-                    expand=True,
-                )
+            with Horizontal(id="output-panel"):
+                yield ListView(id="sidebar")
+                with VerticalScroll(id="reader-container"):
+                    yield Static(
+                        "[b #8b0000]Quijote IR[/]\n\n"
+                        "Arranque inmediato activado.\n"
+                        "Pulsa Enter en la ruta para indexar o lanza una consulta para iniciar carga bajo demanda.",
+                        id="reader",
+                        expand=True,
+                    )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -315,6 +343,7 @@ class QuijoteApp(App):
                 "Puedes pegar otra ruta valida y pulsar Enter para indexar."
             )
 
+        self._sync_model_visibility()
         self.set_interval(0.5, self._on_progress_tick)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -334,6 +363,7 @@ class QuijoteApp(App):
             return
 
         self.selected_mode = str(event.value)
+        self._sync_model_visibility()
         if self.index_state != "ready" or self.index is None:
             return
 
@@ -882,6 +912,17 @@ class QuijoteApp(App):
     def _truncar(self, texto: str, max_chars: int) -> str:
         return texto if len(texto) <= max_chars else f"{texto[: max_chars - 1]}…"
 
+    def _sync_model_visibility(self) -> None:
+        is_rag_mode = self.selected_mode == MODE_RAG
+        model_field = self.query_one("#model-field", Vertical)
+        model_input = self.query_one("#model-input", Input)
+
+        model_field.set_class(not is_rag_mode, "model-hidden")
+        model_input.disabled = not is_rag_mode
+
+        if not is_rag_mode and model_input.has_focus:
+            self.query_one("#mode-select", Select).focus()
+
     def action_focus_file(self) -> None:
         self.query_one("#file-input", Input).focus()
 
@@ -892,6 +933,9 @@ class QuijoteApp(App):
         self.query_one("#mode-select", Select).focus()
 
     def action_focus_model(self) -> None:
+        if self.selected_mode != MODE_RAG:
+            self.query_one("#mode-select", Select).focus()
+            return
         self.query_one("#model-input", Input).focus()
 
 
