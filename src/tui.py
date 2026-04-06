@@ -230,7 +230,13 @@ class QuijoteApp(App):
         display: none;
     }
     #output-panel { height: 2fr; }
-    #sidebar { width: 38%; background: #2b3a42; color: #eee8d5; border-right: solid #d4af37; }
+    #sidebar {
+        width: 38%;
+        background: #2b3a42;
+        color: #eee8d5;
+        border-right: solid #d4af37;
+        padding: 1 0;
+    }
     #sidebar, #reader-container {
         scrollbar-size-vertical: 1;
         scrollbar-color: #d8c8a3;
@@ -241,13 +247,24 @@ class QuijoteApp(App):
         scrollbar-background-active: #e8ddc4;
         scrollbar-corner-color: #f6f1e4;
     }
-    ListItem { padding: 0 1; }
-    ListItem.--highlight, ListItem:hover { background: #6e1313; color: #fff8e7; }
+    ListItem {
+        height: 4;
+        margin: 0 1 1 1;
+        padding: 0 1;
+        border: round #465964;
+        background: #31424f;
+        color: #f1ecdf;
+    }
+    ListItem.--highlight, ListItem:hover {
+        border: round #d4af37;
+        background: #6e1313;
+        color: #fff8e7;
+    }
     #reader-container { width: 62%; padding: 2 3; }
     #reader { height: auto; }
     """
 
-    DISPLAY_LIMIT = 30
+    DISPLAY_LIMIT = 20
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -881,14 +898,30 @@ class QuijoteApp(App):
         return "".join(highlighted_parts)
 
     def _formatear_label_sidebar(self, result: SearchResult) -> str:
-        title = escape(self._truncar(result.chunk.titulo, 54))
-        if result.modo == MODE_CLASSIC:
-            return f"[{result.score:.4f}] C{result.chunk.chunk_id:03d} · {title}"
-        if result.modo == MODE_SEMANTIC:
-            return f"[cos {result.score:.4f}] C{result.chunk.chunk_id:03d} · {title}"
-        if result.modo == MODE_RAG:
-            return f"[rrf {result.score:.4f}] C{result.chunk.chunk_id:03d} · {title}"
-        return f"C{result.chunk.chunk_id:03d} · {title}"
+        chapter_label = escape(self._formatear_capitulo_sidebar(result.chunk.seccion))
+        pass_label = escape(self._extraer_pasaje_sidebar(result.chunk.titulo))
+        head = f"[b]C{result.chunk.chunk_id:03d}[/b] · {chapter_label} · {pass_label}"
+        return f"{head}\n[dim]score {result.score:.3f}[/dim]"
+
+    def _formatear_capitulo_sidebar(self, seccion: str) -> str:
+        if not seccion:
+            return "Seccion"
+        section_head = seccion.split(".", 1)[0].strip()
+        if section_head:
+            return self._truncar(section_head, 32)
+        return self._truncar(seccion.strip(), 32)
+
+    def _extraer_pasaje_sidebar(self, titulo: str) -> str:
+        marker = " · pasaje "
+        lowered = titulo.lower()
+        marker_index = lowered.rfind(marker)
+        if marker_index == -1:
+            return "pasaje ?"
+
+        pasaje_number = titulo[marker_index + len(marker) :].strip()
+        if not pasaje_number:
+            return "pasaje ?"
+        return f"pasaje {pasaje_number}"
 
     def _formatear_metadata_resultado(self, result: SearchResult | None) -> str:
         if result is None or result.modo == MODE_BROWSE:
