@@ -22,7 +22,9 @@ Construir un sistema de Recuperación de Información en español que permita:
 ## Funcionalidades implementadas
 
 - Carga dinámica de corpus HTML desde la interfaz.
-- Indexación automática al arrancar (usa `2000-h.htm` por defecto).
+- Precarga de la ruta por defecto `2000-h.htm` en la TUI.
+- Indexación manual o bajo demanda desde la TUI.
+- Indexación en background con progreso por fases, ETA y reinicio cancelable.
 - Preprocesado lingüístico con spaCy (`es_core_news_lg`).
 - Chunking con solape configurable para preservar contexto.
 - Búsqueda clásica con ranking TF-IDF propio.
@@ -31,6 +33,8 @@ Construir un sistema de Recuperación de Información en español que permita:
 - Generación de respuesta con Ollama usando solo el contexto recuperado.
 - Visualización lateral de resultados y lectura detallada del pasaje seleccionado.
 - Resaltado de lemas de la consulta dentro del texto del pasaje.
+- Exploración inicial del corpus cuando el índice ya está listo y no hay consulta.
+- Reejecución automática al cambiar de modo, y regeneración RAG al cambiar de modelo.
 - Atajos de teclado para flujo rápido en la TUI.
 
 ## Requisitos
@@ -47,18 +51,23 @@ uv sync
 uv run p4.py
 ```
 
-Si vas a usar RAG, asegúrate de tener Ollama levantado y un modelo disponible (por defecto se usa `qwen3:0.6b`, o el valor de `P4_OLLAMA_MODEL`).
+Si vas a usar RAG, asegúrate de tener Ollama levantado y un modelo disponible. Por defecto la app usa `gemma4:e2b`, pero el usuario puede escribir cualquier otro modelo en la interfaz o sobrescribirlo con `P4_OLLAMA_MODEL`.
+
+La app arranca con la ruta por defecto rellenada, pero no indexa el corpus hasta que pulses `Enter` en la ruta o lances una consulta no vacía.
 
 ## Flujo completo (end-to-end)
 
-1. La app arranca y trata de cargar `2000-h.htm`.
-2. El HTML se parsea y se extraen secciones y párrafos.
-3. Se crean chunks de texto con tamaño objetivo de 180 palabras y overlap de 45.
-4. Cada chunk se analiza con spaCy para obtener lemas y vectores.
-5. Se construyen los datos para ranking clásico y semántico.
-6. Se almacenan chunk, estadísticas y embeddings en memoria.
-7. En cada consulta se ejecuta el modo seleccionado (`clásico`, `semántico` o `rag`).
-8. Se muestran resultados en sidebar y contenido/metadata en panel lector.
+1. La app arranca con `2000-h.htm` rellenado en el campo de ruta y con modo `clásico` seleccionado.
+2. La indexación comienza cuando el usuario pulsa `Enter` en la ruta o escribe una consulta no vacía sin índice disponible.
+3. Un worker en background carga `es_core_news_lg` si todavía no estaba en memoria.
+4. El HTML se parsea y se extraen secciones y párrafos.
+5. Se crean chunks de texto con tamaño objetivo de 180 palabras y overlap de 45.
+6. Cada chunk se analiza con spaCy para obtener lemas, conteos y vectores.
+7. Se construyen en memoria los datos para ranking clásico y semántico.
+8. La TUI muestra progreso por fase, porcentaje y ETA durante la indexación.
+9. Cuando el índice está listo, se muestra una exploración inicial con los primeros pasajes del corpus.
+10. En cada consulta se ejecuta el modo seleccionado (`clásico`, `semántico` o `rag`).
+11. Se muestran resultados en sidebar y contenido/metadata en panel lector.
 
 ## Arquitectura y módulos
 
@@ -67,8 +76,13 @@ Si vas a usar RAG, asegúrate de tener Ollama levantado y un modelo disponible (
   - Arranca la TUI definida en `src/tui.py`.
 
 - `src/tui.py`
-  - Interfaz Textual y eventos de usuario.
-  - Gestiona carga de archivo, render de resultados y respuesta RAG.
+  - Interfaz Textual principal y coordinación de eventos de usuario.
+  - Gestiona carga de archivo, búsquedas y ciclo de indexación.
+
+- `src/ui/`
+  - `styles.py`: CSS de Textual extraído del archivo principal.
+  - `presenters.py`: renderizadores y helpers de formateo para sidebar/panel lector.
+  - `indexing.py`: dataclasses auxiliares del flujo de indexación en background.
 
 - `src/orchestrator.py`
   - Orquesta la ejecución de los modos (`classic`, `semantic`, `rag`).
@@ -172,7 +186,7 @@ Luego aplica RRF:
 
 - `score_rrf += 1 / (60 + rank)`
 
-Se devuelven top `6` pasajes fusionados para construir el prompt de generación.
+Se devuelven top `6` pasajes fusionados para construir el prompt de generación y poblar la barra lateral en modo RAG.
 
 ### 7) Generación con Ollama
 
@@ -193,7 +207,7 @@ Entradas principales:
 - Ruta de archivo HTML.
 - Consulta.
 - Selector de modo.
-- Modelo de Ollama.
+- Modelo de Ollama (solo visible y editable en modo RAG).
 
 Atajos de teclado:
 
@@ -205,6 +219,12 @@ Atajos de teclado:
 
 Comportamiento importante:
 
+- Si no hay índice y escribes una consulta no vacía, la app inicia la indexación bajo demanda.
+- Si la consulta dispara una indexación bajo demanda, cuando termine debes volver a pulsar `Enter` para ejecutar la búsqueda.
+- Si cambias de archivo mientras una indexación sigue en curso, la indexación anterior se cancela y se reinicia con la nueva ruta.
+- Si lanzas una búsqueda mientras se está indexando, la app no la encola; muestra el estado actual y pide reintentar al terminar.
+- Si la consulta está vacía y el índice ya existe, la TUI vuelve al modo de exploración inicial del corpus.
+- Si falta el corpus por defecto o la ruta indicada no existe, la TUI muestra error y permite reintentar con otra ruta.
 - Si cambias de modo y hay consulta activa, la búsqueda se recalcula automáticamente.
 - Si cambias modelo en modo RAG, la respuesta se regenera automáticamente.
 - La barra lateral muestra score según modo (`TF-IDF`, `cos`, `rrf`).
@@ -238,6 +258,11 @@ PLN_p4/
 |  |- tui.py
 |  |- orchestrator.py
 |  |- preprocessing.py
+|  |- ui/
+|  |  |- __init__.py
+|  |  |- indexing.py
+|  |  |- presenters.py
+|  |  `- styles.py
 |  `- modes/
 |     |- __init__.py
 |     |- classic_mode.py
@@ -253,4 +278,5 @@ PLN_p4/
 - El corpus incluido (`2000-h.htm`) ocupa ~2.3 MB.
 - Con el parser y chunking actuales, este corpus produce `137` secciones y `3632` chunks.
 - Con parámetros por defecto (`180/45`), el chunking genera miles de pasajes para recuperar contexto fino.
-- La app usa `spacy.load("es_core_news_lg")` al iniciar; si falta el modelo, la ejecución fallará al arrancar.
+- La app carga `spacy.load("es_core_news_lg")` en la primera indexación; si falta el modelo, la ejecución fallará en ese momento.
+- El índice no se persiste en disco: se reconstruye en memoria cada vez que se indexa un HTML.

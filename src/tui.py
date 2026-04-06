@@ -1,16 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from time import monotonic
 from typing import Any, Literal
 
-from rich.align import Align
-from rich.console import Group
-from rich.markup import escape
-from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -29,27 +24,26 @@ from src.preprocessing import (
     SearchResult,
     TextAnalysis,
 )
-
-
-MODE_BROWSE = "browse"
-
-
-@dataclass(slots=True)
-class IndexingWorkerResult:
-    run_id: int
-    path: Path
-    stats: dict[str, int]
-    index: QuijoteIndex
-    nlp: Any
-
-
-@dataclass(slots=True)
-class ProgressSnapshot:
-    run_id: int
-    stage: str
-    completed: int | None
-    total: int | None
-    updated_at: float
+from src.ui.indexing import IndexingWorkerResult, ProgressSnapshot
+from src.ui.presenters import (
+    MODE_BROWSE,
+    format_result_metadata,
+    format_sidebar_label,
+    render_chunk_detail,
+    render_classic_summary,
+    render_index_cancelled,
+    render_index_error,
+    render_index_ready,
+    render_initial_reader,
+    render_loading_status,
+    render_missing_default_corpus,
+    render_missing_file,
+    render_model_updated,
+    render_rag_error,
+    render_rag_success,
+    render_semantic_summary,
+)
+from src.ui.styles import APP_CSS
 
 
 class QuijoteApp(App):
@@ -61,209 +55,7 @@ class QuijoteApp(App):
         Binding("ctrl+q", "quit", "Salir"),
     ]
 
-    CSS = """
-    Screen { background: #f4efe1; color: #1c1b19; }
-    Header { background: #8b0000; color: #fef7e6; }
-    Footer { background: #2b3a42; color: #fef7e6; }
-    #main-body { height: 1fr; }
-    #top-panel {
-        height: 30%;
-        min-height: 10;
-        background: #eee8d5;
-        border-bottom: solid #d4af37;
-        padding: 0 1;
-    }
-    #top-left {
-        width: 1fr;
-        margin-right: 1;
-        height: 1fr;
-    }
-    #top-right {
-        width: 2fr;
-        height: 1fr;
-    }
-    #mode-stack { height: auto; }
-    .field-card {
-        background: #f7f1e2;
-        border: round #a33838;
-        padding: 0;
-        margin-bottom: 0;
-    }
-    .field-label {
-        height: 1;
-        margin-left: 0;
-        color: #6d5a3d;
-    }
-    #mode-field, #model-field { width: 1fr; }
-    #mode-field {
-        height: auto;
-        margin-top: 1;
-        margin-bottom: 0;
-        background: #7f1010;
-        border: round #d4af37;
-        padding: 0 1;
-    }
-    #mode-field .field-label {
-        color: #f7e7bf;
-        text-style: bold;
-    }
-    #model-field {
-        height: auto;
-        border: none;
-        background: transparent;
-        padding: 0;
-    }
-    #model-field .field-label { color: #6d5a3d; }
-    #model-field #model-input {
-        background: #fff8ec;
-    }
-    #file-field {
-        height: auto;
-        margin-bottom: 0;
-    }
-    #query-field {
-        height: auto;
-        min-height: 4;
-        background: #f9f2df;
-    }
-    #query-field .field-label {
-        color: #6d5a3d;
-        text-style: none;
-    }
-    #file-input, #search-input, #mode-select, #model-input { width: 1fr; }
-    Input {
-        height: 1;
-        margin: 0;
-        padding: 0;
-        background: #fffaf0;
-        color: #1a1a1a;
-        border: none;
-    }
-    Input:hover { border: none; background: #fff8ec; }
-    Input:focus {
-        border: none;
-        background: #fffdf7;
-    }
-    #search-input {
-        border: none;
-        background: #fffdf4;
-    }
-    #search-input:focus {
-        border: none;
-        background: #fffef8;
-    }
-    Select {
-        height: auto;
-        margin: 0;
-        background: transparent;
-        color: #1a1a1a;
-        border: none;
-    }
-    Select:hover, Select:focus {
-        border: none;
-        background: transparent;
-    }
-    #mode-select {
-        height: 3;
-        margin: 0;
-        padding: 0;
-        background: transparent;
-        color: #1a1a1a;
-        border: none;
-    }
-    #mode-select > SelectCurrent {
-        height: 3;
-        margin: 0;
-        background: #fff6e2;
-        color: #7f1010;
-        border: round #d4af37;
-        padding: 0 1;
-    }
-    #mode-select > SelectCurrent:ansi {
-        height: 3;
-        background: #fff6e2;
-        color: #7f1010;
-        border: round #d4af37;
-    }
-    #mode-select > SelectCurrent:hover {
-        background: #fff9eb;
-    }
-    #mode-select:focus > SelectCurrent {
-        background: #fffdf7;
-        border: round #f0d68a;
-    }
-    #mode-select > SelectCurrent Static#label {
-        color: #7f1010;
-        background: transparent;
-        text-style: bold;
-    }
-    #mode-select > SelectCurrent.-has-value Static#label {
-        color: #7f1010;
-        text-style: bold;
-    }
-    #mode-select > SelectCurrent .arrow {
-        color: #8b5f1a;
-        background: transparent;
-    }
-    #mode-select > SelectOverlay {
-        background: #fffaf0;
-        color: #1a1a1a;
-        border: round #8f2626;
-    }
-    #mode-select > SelectOverlay:focus {
-        border: round #d4af37;
-        background: #fffdf7;
-    }
-    #mode-select > SelectOverlay > .option-list--option {
-        color: #1a1a1a;
-        background: #fffaf0;
-    }
-    #mode-select > SelectOverlay > .option-list--option-hover {
-        color: #1a1a1a;
-        background: #f5ebd3;
-    }
-    #mode-select > SelectOverlay > .option-list--option-highlighted {
-        color: #7f1010;
-        background: #f3e6c6;
-    }
-    #model-field.model-hidden {
-        display: none;
-    }
-    #output-panel { height: 2fr; }
-    #sidebar {
-        width: 38%;
-        background: #2b3a42;
-        color: #eee8d5;
-        border-right: solid #d4af37;
-        padding: 1 0;
-    }
-    #sidebar, #reader-container {
-        scrollbar-size-vertical: 1;
-        scrollbar-color: #d8c8a3;
-        scrollbar-color-hover: #cab588;
-        scrollbar-color-active: #bba06e;
-        scrollbar-background: #f6f1e4;
-        scrollbar-background-hover: #f0e9d9;
-        scrollbar-background-active: #e8ddc4;
-        scrollbar-corner-color: #f6f1e4;
-    }
-    ListItem {
-        height: 4;
-        margin: 0 1 1 1;
-        padding: 0 1;
-        border: round #465964;
-        background: #31424f;
-        color: #f1ecdf;
-    }
-    ListItem.--highlight, ListItem:hover {
-        border: round #d4af37;
-        background: #6e1313;
-        color: #fff8e7;
-    }
-    #reader-container { width: 62%; padding: 2 3; }
-    #reader { height: auto; }
-    """
-
+    CSS = APP_CSS
     DISPLAY_LIMIT = 20
 
     def __init__(self, *args, **kwargs) -> None:
@@ -276,7 +68,7 @@ class QuijoteApp(App):
         self.current_results: list[SearchResult] = []
         self.results_by_chunk_id: dict[int, SearchResult] = {}
 
-        self.default_rag_model = os.getenv("P4_OLLAMA_MODEL", "qwen3:0.6b")
+        self.default_rag_model = os.getenv("P4_OLLAMA_MODEL", "gemma4:e2b")
         self.default_corpus_path = Path(__file__).resolve().parent.parent / "2000-h.htm"
 
         self.index_state: Literal["idle", "loading", "ready", "error"] = "idle"
@@ -302,7 +94,9 @@ class QuijoteApp(App):
                 with Vertical(id="top-left"):
                     with Vertical(id="mode-stack"):
                         with Vertical(classes="field-card", id="mode-field"):
-                            yield Static("MODO DE OPERACION (Ctrl+M)", classes="field-label")
+                            yield Static(
+                                "MODO DE OPERACION (Ctrl+M)", classes="field-label"
+                            )
                             yield Select(
                                 [
                                     ("1. Clasica", MODE_CLASSIC),
@@ -314,11 +108,13 @@ class QuijoteApp(App):
                                 prompt="Modo",
                                 id="mode-select",
                             )
-                        with Vertical(classes="field-card model-hidden", id="model-field"):
+                        with Vertical(
+                            classes="field-card model-hidden", id="model-field"
+                        ):
                             yield Static("Modelo", classes="field-label")
                             yield Input(
                                 value=self.default_rag_model,
-                                placeholder="Modelo Ollama (ej. qwen3:0.6b)",
+                                placeholder="Modelo Ollama (ej. gemma4:e2b)",
                                 id="model-input",
                             )
                 with Vertical(id="top-right"):
@@ -338,22 +134,14 @@ class QuijoteApp(App):
             with Horizontal(id="output-panel"):
                 yield ListView(id="sidebar")
                 with VerticalScroll(id="reader-container"):
-                    yield Static(
-                        "[b #8b0000]Quijote IR[/]\n\n"
-                        "Arranque inmediato activado.\n"
-                        "Pulsa Enter en la ruta para indexar o lanza una consulta para iniciar carga bajo demanda.",
-                        id="reader",
-                        expand=True,
-                    )
+                    yield Static(render_initial_reader(), id="reader", expand=True)
         yield Footer()
 
     def on_mount(self) -> None:
         if not self.default_corpus_path.exists():
             self.index_state = "error"
-            self.query_one("#reader", Static).update(
-                "[b red]No se encontro el corpus por defecto.[/b red]\n\n"
-                f"Ruta esperada: {escape(str(self.default_corpus_path))}\n"
-                "Puedes pegar otra ruta valida y pulsar Enter para indexar."
+            self._reader().update(
+                render_missing_default_corpus(self.default_corpus_path)
             )
 
         self._sync_model_visibility()
@@ -390,7 +178,9 @@ class QuijoteApp(App):
         if event.state == WorkerState.SUCCESS:
             result = event.worker.result
             if not isinstance(result, IndexingWorkerResult):
-                self._finalizar_indexacion_error("La indexacion termino sin resultado util.")
+                self._finalizar_indexacion_error(
+                    "La indexacion termino sin resultado util."
+                )
                 return
             if result.run_id != self._index_run_id:
                 return
@@ -404,18 +194,16 @@ class QuijoteApp(App):
             self.index_start_time = None
             self.loading_notice = None
 
-            self.current_query = ""
-            self.current_query_analysis = TextAnalysis.empty()
+            self._reset_search_state()
             self._mostrar_exploracion_inicial()
-            self.query_one("#reader", Static).update(
-                "[b #8b0000]Indice listo[/]\n\n"
-                f"Archivo indexado: {escape(str(result.path))}\n"
-                f"Secciones detectadas: {result.stats['sections']}\n"
-                f"Pasajes indexados: {result.stats['chunks']}\n"
-                f"Tamano de chunk: {result.index.chunk_size_words} palabras\n"
-                f"Overlap: {result.index.chunk_overlap_words} palabras\n"
-                f"Modelo Ollama actual: {escape(self._obtener_modelo_ollama())}\n\n"
-                "Ya puedes escribir una consulta para buscar."
+            self._reader().update(
+                render_index_ready(
+                    result.path,
+                    result.stats,
+                    result.index.chunk_size_words,
+                    result.index.chunk_overlap_words,
+                    self._obtener_modelo_ollama(),
+                )
             )
             return
 
@@ -429,12 +217,14 @@ class QuijoteApp(App):
             )
             return
 
-        self._finalizar_indexacion_error(str(error) if error else "Error desconocido en indexacion.")
+        self._finalizar_indexacion_error(
+            str(error) if error else "Error desconocido en indexacion."
+        )
 
     def cargar_archivo(self, ruta_str: str) -> None:
         normalized_path = ruta_str.strip() or str(self.default_corpus_path)
         path = Path(normalized_path)
-        self.query_one("#file-input", Input).value = str(path)
+        self._file_input().value = str(path)
 
         was_loading = self.index_state == "loading"
         if was_loading:
@@ -450,12 +240,9 @@ class QuijoteApp(App):
             self.active_stage = "Error"
             self.index_start_time = None
             self.loading_notice = None
-            self.current_query = ""
-            self.current_query_analysis = TextAnalysis.empty()
+            self._reset_search_state()
             self._actualizar_sidebar([])
-            self.query_one("#reader", Static).update(
-                f"[b red]Error:[/b red] No se encontro el archivo en {escape(str(path))}."
-            )
+            self._reader().update(render_missing_file(path))
             return
 
         trigger = "manual_restart" if was_loading else "manual"
@@ -481,7 +268,9 @@ class QuijoteApp(App):
         index = QuijoteIndex(nlp)
 
         def on_progress(progress: IndexProgress) -> None:
-            self._set_progress(run_id, progress.stage, progress.completed, progress.total)
+            self._set_progress(
+                run_id, progress.stage, progress.completed, progress.total
+            )
 
         stats = index.cargar_archivo(
             path,
@@ -509,14 +298,11 @@ class QuijoteApp(App):
         self.indexed_path = None
         self.active_stage = "Preparando indexacion"
         self.index_start_time = monotonic()
-        self.current_query = ""
-        self.current_query_analysis = TextAnalysis.empty()
+        self._reset_search_state()
         self._actualizar_sidebar([])
 
         if trigger == "search":
-            self.loading_notice = (
-                "No hay indice listo. Se inicia la indexacion; cuando termine, vuelve a pulsar Enter en la consulta."
-            )
+            self.loading_notice = "No hay indice listo. Se inicia la indexacion; cuando termine, vuelve a pulsar Enter en la consulta."
         elif trigger == "manual_restart":
             self.loading_notice = "Se cancelo la indexacion anterior y se inicio una nueva con la ruta actual."
         else:
@@ -541,10 +327,7 @@ class QuijoteApp(App):
         self.loading_notice = None
         self.active_stage = "En espera"
         self._actualizar_sidebar([])
-        self.query_one("#reader", Static).update(
-            "[b #8b0000]Indexacion cancelada[/]\n\n"
-            f"{escape(message)}"
-        )
+        self._reader().update(render_index_cancelled(message))
 
     def _finalizar_indexacion_error(self, reason: str) -> None:
         self.active_worker = None
@@ -555,11 +338,7 @@ class QuijoteApp(App):
         self.loading_notice = None
         self.active_stage = "Error"
         self._actualizar_sidebar([])
-        self.query_one("#reader", Static).update(
-            "[b red]Error durante la indexacion.[/b red]\n\n"
-            f"{escape(reason)}\n\n"
-            "Revisa la ruta y vuelve a pulsar Enter para reintentar."
-        )
+        self._reader().update(render_index_error(reason))
 
     def _on_progress_tick(self) -> None:
         if self.index_state != "loading":
@@ -578,31 +357,14 @@ class QuijoteApp(App):
         if self.index_start_time is not None:
             elapsed = max(0.0, monotonic() - self.index_start_time)
 
-        counts_text = "--"
-        percent_text = "--"
-        eta_text = "calculando ETA..."
-
-        if snapshot.total and snapshot.completed is not None and snapshot.total > 0:
-            completed = min(snapshot.completed, snapshot.total)
-            percent = (completed / snapshot.total) * 100.0
-            counts_text = f"{completed}/{snapshot.total}"
-            percent_text = f"{percent:.1f}%"
-            if completed > 0:
-                remaining_steps = max(0, snapshot.total - completed)
-                eta_seconds = (elapsed / completed) * remaining_steps
-                eta_text = self._formatear_duracion(eta_seconds)
-
-        notice = ""
-        if self.loading_notice:
-            notice = f"\n\n[dim]{escape(self.loading_notice)}[/dim]"
-
-        self.query_one("#reader", Static).update(
-            "[b #8b0000]Indexando corpus...[/]\n\n"
-            f"Fase: {escape(snapshot.stage)}\n"
-            f"Progreso: {escape(counts_text)} ({escape(percent_text)})\n"
-            f"Tiempo transcurrido: {self._formatear_duracion(elapsed)}\n"
-            f"ETA: {escape(eta_text)}"
-            f"{notice}"
+        self._reader().update(
+            render_loading_status(
+                snapshot.stage,
+                snapshot.completed,
+                snapshot.total,
+                elapsed,
+                self.loading_notice,
+            )
         )
 
     def _set_progress(
@@ -638,19 +400,9 @@ class QuijoteApp(App):
     def _should_cancel(self, worker: Worker[IndexingWorkerResult], run_id: int) -> bool:
         return worker.is_cancelled or run_id != self._index_run_id
 
-    def _formatear_duracion(self, seconds: float) -> str:
-        total = max(0, int(seconds))
-        minutes, secs = divmod(total, 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            return f"{hours}h {minutes:02d}m {secs:02d}s"
-        return f"{minutes:02d}:{secs:02d}"
-
     def ejecutar_busqueda(self, consulta: str) -> None:
         if self.index_state == "loading":
-            self.loading_notice = (
-                "Hay una indexacion en curso. Espera a que termine y vuelve a pulsar Enter para ejecutar la consulta."
-            )
+            self.loading_notice = "Hay una indexacion en curso. Espera a que termine y vuelve a pulsar Enter para ejecutar la consulta."
             self._render_loading_status()
             return
 
@@ -658,27 +410,26 @@ class QuijoteApp(App):
         if self.index_state != "ready" or index is None:
             clean_query = consulta.strip()
             if not clean_query:
-                self.current_query = ""
-                self.current_query_analysis = TextAnalysis.empty()
-                self.query_one("#reader", Static).update(
+                self._reset_search_state()
+                self._reader().update(
                     "Consulta vacia. Carga un archivo (Enter en ruta) o escribe una consulta con contenido."
                 )
                 return
 
-            path_text = self.query_one("#file-input", Input).value.strip() or str(self.default_corpus_path)
+            path_text = self._file_input().value.strip() or str(
+                self.default_corpus_path
+            )
             path = Path(path_text)
             if not path.exists():
                 self.index_state = "error"
-                self.query_one("#reader", Static).update(
-                    f"[b red]Error:[/b red] No se encontro el archivo en {escape(str(path))}."
-                )
+                self._reader().update(render_missing_file(path))
                 return
 
             self._start_indexing(path, "search")
             return
 
         if index.total_chunks == 0:
-            self.query_one("#reader", Static).update(
+            self._reader().update(
                 "[b red]Antes debes cargar e indexar el HTML del Quijote.[/b red]"
             )
             return
@@ -687,7 +438,7 @@ class QuijoteApp(App):
         if not self.current_query:
             self.current_query_analysis = TextAnalysis.empty()
             self._mostrar_exploracion_inicial()
-            self.query_one("#reader", Static).update(
+            self._reader().update(
                 "Consulta vacia. Mostrando una seleccion inicial de pasajes."
             )
             return
@@ -702,11 +453,23 @@ class QuijoteApp(App):
         self._actualizar_sidebar(execution.sidebar_results)
 
         if execution.mode == MODE_CLASSIC:
-            self._mostrar_resumen_clasico(execution.mode_results)
+            self._reader().update(
+                render_classic_summary(
+                    self.current_query_analysis.lemma_set,
+                    len(execution.mode_results),
+                    self.DISPLAY_LIMIT,
+                )
+            )
             return
 
         if execution.mode == MODE_SEMANTIC:
-            self._mostrar_resumen_semantico(execution.mode_results)
+            self._reader().update(
+                render_semantic_summary(
+                    self.current_query_analysis.embedding_norm,
+                    execution.mode_results,
+                    self.DISPLAY_LIMIT,
+                )
+            )
             return
 
         self._mostrar_respuesta_rag(
@@ -717,13 +480,11 @@ class QuijoteApp(App):
 
     def actualizar_modelo_ollama(self, modelo: str) -> None:
         normalized = modelo.strip() or self.default_rag_model
-        model_input = self.query_one("#model-input", Input)
+        model_input = self._model_input()
         model_input.value = normalized
 
         if self.index_state == "loading":
-            self.loading_notice = (
-                "Modelo actualizado. Se aplicara cuando termine la indexacion y ejecutes una consulta en modo RAG."
-            )
+            self.loading_notice = "Modelo actualizado. Se aplicara cuando termine la indexacion y ejecutes una consulta en modo RAG."
             self._render_loading_status()
             return
 
@@ -737,10 +498,7 @@ class QuijoteApp(App):
             self.ejecutar_busqueda(self.current_query)
             return
 
-        self.query_one("#reader", Static).update(
-            "[b #8b0000]Modelo de Ollama actualizado[/]\n\n"
-            f"Modelo actual: {escape(normalized)}"
-        )
+        self._reader().update(render_model_updated(normalized))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.item is None or event.item.name is None:
@@ -756,14 +514,13 @@ class QuijoteApp(App):
             return
 
         result = self.results_by_chunk_id.get(chunk_id)
-        metadata = self._formatear_metadata_resultado(result)
-        highlighted_text = self._resaltar_texto(chunk.texto, self.current_query_analysis.lemma_set)
-        chapter_title = Text(chunk.titulo, style="bold #8b0000", justify="center")
-        content = Text.from_markup(f"{highlighted_text}\n\n{metadata}")
-        self.query_one("#reader", Static).update(
-            Group(
-                Align.center(chapter_title, vertical="top"),
-                content,
+        self._reader().update(
+            render_chunk_detail(
+                chunk.titulo,
+                chunk.texto,
+                self.current_query_analysis.lemma_set,
+                format_result_metadata(result),
+                self.nlp,
             )
         )
 
@@ -780,62 +537,21 @@ class QuijoteApp(App):
         self._actualizar_sidebar(initial)
 
     def _actualizar_sidebar(self, resultados: list[SearchResult]) -> None:
-        sidebar = self.query_one("#sidebar", ListView)
+        sidebar = self._sidebar()
         sidebar.clear()
 
         self.current_results = resultados
-        self.results_by_chunk_id = {result.chunk.chunk_id: result for result in resultados}
+        self.results_by_chunk_id = {
+            result.chunk.chunk_id: result for result in resultados
+        }
 
         for result in resultados:
-            label = self._formatear_label_sidebar(result)
-            sidebar.append(ListItem(Static(label), name=str(result.chunk.chunk_id)))
-
-    def _mostrar_resumen_clasico(self, resultados: list[SearchResult]) -> None:
-        reader = self.query_one("#reader", Static)
-        if not self.current_query_analysis.lemma_set:
-            reader.update(
-                "La consulta no contiene terminos utiles tras eliminar stopwords. "
-                "Prueba con nombres o conceptos mas informativos."
+            sidebar.append(
+                ListItem(
+                    Static(format_sidebar_label(result)),
+                    name=str(result.chunk.chunk_id),
+                )
             )
-            return
-
-        if not resultados:
-            reader.update(
-                "[b red]Sin resultados clasicos.[/b red]\n\n"
-                f"Consulta lematizada: {', '.join(sorted(self.current_query_analysis.lemma_set))}"
-            )
-            return
-
-        shown = min(len(resultados), self.DISPLAY_LIMIT)
-        reader.update(
-            "[b #8b0000]Busqueda clasica[/]\n\n"
-            f"Consulta lematizada: {', '.join(sorted(self.current_query_analysis.lemma_set))}\n"
-            f"Resultados recuperados: {len(resultados)}\n"
-            f"Mostrando: {shown}\n\n"
-            "Selecciona un pasaje en la barra lateral para ver el texto con los lemas resaltados."
-        )
-
-    def _mostrar_resumen_semantico(self, resultados: list[SearchResult]) -> None:
-        reader = self.query_one("#reader", Static)
-        if self.current_query_analysis.embedding_norm == 0:
-            reader.update(
-                "La consulta no genero un embedding util. "
-                "Prueba con una frase con contenido lexico mas claro."
-            )
-            return
-
-        if not resultados:
-            reader.update("[b red]Sin resultados semanticos.[/b red]")
-            return
-
-        shown = min(len(resultados), self.DISPLAY_LIMIT)
-        reader.update(
-            "[b #8b0000]Busqueda semantica[/]\n\n"
-            "Pasajes ordenados por similitud coseno con el embedding de la consulta.\n"
-            f"Mostrando top: {shown}\n"
-            f"Mejor score: {resultados[0].score:.4f}\n\n"
-            "Selecciona un pasaje para inspeccionar el texto recuperado."
-        )
 
     def _mostrar_respuesta_rag(
         self,
@@ -843,129 +559,79 @@ class QuijoteApp(App):
         clasicos: list[SearchResult],
         semanticos: list[SearchResult],
     ) -> None:
-        reader = self.query_one("#reader", Static)
-        modelo = self._obtener_modelo_ollama()
-
         if not fusion:
-            reader.update("[b red]RAG sin contexto suficiente.[/b red]")
+            self._reader().update("[b red]RAG sin contexto suficiente.[/b red]")
             return
 
+        modelo = self._obtener_modelo_ollama()
         try:
             answer = generar_respuesta_ollama(self.current_query, fusion, modelo)
         except Exception as exc:
-            reader.update(
-                "[b #8b0000]Contexto RAG recuperado[/]\n\n"
-                "No se pudo generar la respuesta con Ollama.\n"
-                f"Motivo: {escape(str(exc))}\n\n"
-                f"Modelo seleccionado: {escape(modelo)}\n"
-                f"Pasajes fusionados: {len(fusion)}\n"
-                f"Top clasicos usados: {len(clasicos)}\n"
-                f"Top semanticos usados: {len(semanticos)}\n\n"
-                "Los pasajes de apoyo siguen disponibles en la barra lateral."
+            self._reader().update(
+                render_rag_error(
+                    str(exc),
+                    modelo,
+                    len(fusion),
+                    len(clasicos),
+                    len(semanticos),
+                )
             )
             return
 
-        referencias = ", ".join(f"C{result.chunk.chunk_id}" for result in fusion)
-        reader.update(
-            "[b #8b0000]Respuesta RAG[/]\n\n"
-            f"Modelo: {escape(modelo)}\n\n"
-            f"{escape(answer)}\n\n"
-            f"[dim]Referencias disponibles en la barra lateral: {escape(referencias)}[/dim]"
-        )
+        self._reader().update(render_rag_success(answer, modelo, fusion))
 
     def _obtener_modelo_ollama(self) -> str:
-        model_input = self.query_one("#model-input", Input)
+        model_input = self._model_input()
         modelo = model_input.value.strip()
         if not modelo:
             modelo = self.default_rag_model
             model_input.value = modelo
         return modelo
 
-    def _resaltar_texto(self, texto: str, query_lemmas: frozenset[str]) -> str:
-        if not query_lemmas or self.nlp is None:
-            return escape(texto)
-
-        doc = self.nlp(texto)
-        highlighted_parts: list[str] = []
-        for token in doc:
-            escaped_text = escape(token.text)
-            lemma = token.lemma_.lower()
-            if token.is_alpha and not token.is_stop and lemma in query_lemmas:
-                highlighted_parts.append(f"[b #8b0000 on #d4af37]{escaped_text}[/]{token.whitespace_}")
-            else:
-                highlighted_parts.append(f"{escaped_text}{token.whitespace_}")
-
-        return "".join(highlighted_parts)
-
-    def _formatear_label_sidebar(self, result: SearchResult) -> str:
-        chapter_label = escape(self._formatear_capitulo_sidebar(result.chunk.seccion))
-        pass_label = escape(self._extraer_pasaje_sidebar(result.chunk.titulo))
-        head = f"[b]C{result.chunk.chunk_id:03d}[/b] · {chapter_label} · {pass_label}"
-        return f"{head}\n[dim]score {result.score:.3f}[/dim]"
-
-    def _formatear_capitulo_sidebar(self, seccion: str) -> str:
-        if not seccion:
-            return "Seccion"
-        section_head = seccion.split(".", 1)[0].strip()
-        if section_head:
-            return self._truncar(section_head, 32)
-        return self._truncar(seccion.strip(), 32)
-
-    def _extraer_pasaje_sidebar(self, titulo: str) -> str:
-        marker = " · pasaje "
-        lowered = titulo.lower()
-        marker_index = lowered.rfind(marker)
-        if marker_index == -1:
-            return "pasaje ?"
-
-        pasaje_number = titulo[marker_index + len(marker) :].strip()
-        if not pasaje_number:
-            return "pasaje ?"
-        return f"pasaje {pasaje_number}"
-
-    def _formatear_metadata_resultado(self, result: SearchResult | None) -> str:
-        if result is None or result.modo == MODE_BROWSE:
-            return "[dim]Exploracion manual del corpus.[/dim]"
-        if result.modo == MODE_CLASSIC:
-            return f"[dim]TF-IDF: {result.score:.4f}[/dim]"
-        if result.modo == MODE_SEMANTIC:
-            return f"[dim]Similitud coseno: {result.score:.4f}[/dim]"
-        return (
-            "[dim]"
-            f"RRF: {result.score:.4f} | "
-            f"clasico: {result.clasico_score:.4f} | "
-            f"semantico: {result.semantico_score:.4f}"
-            "[/dim]"
-        )
-
-    def _truncar(self, texto: str, max_chars: int) -> str:
-        return texto if len(texto) <= max_chars else f"{texto[: max_chars - 1]}…"
-
     def _sync_model_visibility(self) -> None:
         is_rag_mode = self.selected_mode == MODE_RAG
         model_field = self.query_one("#model-field", Vertical)
-        model_input = self.query_one("#model-input", Input)
+        model_input = self._model_input()
 
         model_field.set_class(not is_rag_mode, "model-hidden")
         model_input.disabled = not is_rag_mode
 
         if not is_rag_mode and model_input.has_focus:
-            self.query_one("#mode-select", Select).focus()
+            self._mode_select().focus()
+
+    def _reset_search_state(self) -> None:
+        self.current_query = ""
+        self.current_query_analysis = TextAnalysis.empty()
+
+    def _file_input(self) -> Input:
+        return self.query_one("#file-input", Input)
+
+    def _model_input(self) -> Input:
+        return self.query_one("#model-input", Input)
+
+    def _mode_select(self) -> Select:
+        return self.query_one("#mode-select", Select)
+
+    def _reader(self) -> Static:
+        return self.query_one("#reader", Static)
+
+    def _sidebar(self) -> ListView:
+        return self.query_one("#sidebar", ListView)
 
     def action_focus_file(self) -> None:
-        self.query_one("#file-input", Input).focus()
+        self._file_input().focus()
 
     def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()
 
     def action_focus_mode(self) -> None:
-        self.query_one("#mode-select", Select).focus()
+        self._mode_select().focus()
 
     def action_focus_model(self) -> None:
         if self.selected_mode != MODE_RAG:
-            self.query_one("#mode-select", Select).focus()
+            self._mode_select().focus()
             return
-        self.query_one("#model-input", Input).focus()
+        self._model_input().focus()
 
 
 def run() -> None:

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
@@ -61,7 +61,9 @@ class IndexProgress:
 
 
 class QuijoteIndex:
-    def __init__(self, nlp, chunk_size_words: int = 180, chunk_overlap_words: int = 45) -> None:
+    def __init__(
+        self, nlp, chunk_size_words: int = 180, chunk_overlap_words: int = 45
+    ) -> None:
         self.nlp = nlp
         self.chunk_size_words = chunk_size_words
         self.chunk_overlap_words = chunk_overlap_words
@@ -98,7 +100,9 @@ class QuijoteIndex:
         total_chunks = len(raw_chunks)
         analyze_stage = f"Analizando chunks ({total_chunks})"
         build_stage = f"Construyendo indices finales ({total_chunks})"
-        docs = self.nlp.pipe((str(raw_chunk["texto"]) for raw_chunk in raw_chunks), batch_size=32)
+        docs = self.nlp.pipe(
+            (str(raw_chunk["texto"]) for raw_chunk in raw_chunks), batch_size=32
+        )
         for processed, doc in enumerate(docs, start=1):
             self._check_cancelled(should_cancel)
             features = self._extraer_features_doc(doc)
@@ -111,7 +115,9 @@ class QuijoteIndex:
         self.total_chunks = len(raw_chunks)
         self._idf_cache.clear()
 
-        for processed, (raw_chunk, features) in enumerate(zip(raw_chunks, features_by_chunk), start=1):
+        for processed, (raw_chunk, features) in enumerate(
+            zip(raw_chunks, features_by_chunk), start=1
+        ):
             self._check_cancelled(should_cancel)
             analisis = self._construir_analisis(features)
             record = ChunkRecord(
@@ -132,36 +138,6 @@ class QuijoteIndex:
         if not texto.strip():
             return TextAnalysis.empty()
         return self._construir_analisis(self._extraer_features_doc(self.nlp(texto)))
-
-    def calcular_score_tfidf(self, query_analysis: TextAnalysis, chunk: ChunkRecord) -> float:
-        if chunk.analisis.total_terminos == 0:
-            return 0.0
-
-        score_total = 0.0
-        for lema, query_count in query_analysis.conteos.items():
-            frequency = chunk.analisis.conteos.get(lema, 0)
-            if frequency == 0:
-                continue
-
-            tf = frequency / chunk.analisis.total_terminos
-            df = self.df_global.get(lema, 0)
-            idf = math.log((1 + self.total_chunks) / (1 + df)) + 1.0
-            query_weight = 1.0 + math.log(query_count)
-            score_total += tf * idf * query_weight
-
-        return score_total
-
-    def cosine_similarity(
-        self,
-        left_vector: tuple[float, ...],
-        left_norm: float,
-        right_vector: tuple[float, ...],
-        right_norm: float,
-    ) -> float:
-        if left_norm == 0 or right_norm == 0:
-            return 0.0
-        dot_product = sum(left * right for left, right in zip(left_vector, right_vector))
-        return dot_product / (left_norm * right_norm)
 
     def _extraer_secciones(self, html: str) -> list[tuple[str, list[str]]]:
         soup = BeautifulSoup(html, "html.parser")
@@ -196,7 +172,9 @@ class QuijoteIndex:
             or text_upper.startswith("CAPITULO")
         )
 
-    def _trocear_secciones(self, sections: list[tuple[str, list[str]]]) -> list[dict[str, object]]:
+    def _trocear_secciones(
+        self, sections: list[tuple[str, list[str]]]
+    ) -> list[dict[str, object]]:
         raw_chunks: list[dict[str, object]] = []
         chunk_id = 1
 
@@ -249,7 +227,10 @@ class QuijoteIndex:
 
             while end < len(paragraphs):
                 paragraph_words = word_counts[end]
-                if current_parts and total_words + paragraph_words > self.chunk_size_words:
+                if (
+                    current_parts
+                    and total_words + paragraph_words > self.chunk_size_words
+                ):
                     break
                 current_parts.append(paragraphs[end])
                 total_words += paragraph_words
@@ -336,8 +317,14 @@ class QuijoteIndex:
                 weighted_vector_sum[index] += value * idf
             total_weight += lemma_token_count * idf
 
-        embedding = tuple(value / total_weight for value in weighted_vector_sum) if total_weight else tuple()
-        embedding_norm = math.sqrt(sum(value * value for value in embedding)) if embedding else 0.0
+        embedding = (
+            tuple(value / total_weight for value in weighted_vector_sum)
+            if total_weight
+            else tuple()
+        )
+        embedding_norm = (
+            math.sqrt(sum(value * value for value in embedding)) if embedding else 0.0
+        )
 
         return TextAnalysis(
             conteos=features.conteos,

@@ -1,9 +1,34 @@
 from __future__ import annotations
 
-from src.preprocessing import QuijoteIndex, SearchResult, TextAnalysis
+import math
+
+from src.preprocessing import ChunkRecord, QuijoteIndex, SearchResult, TextAnalysis
 
 
 MODE_CLASSIC = "classic"
+
+
+def _calcular_score_tfidf(
+    index: QuijoteIndex,
+    query_analysis: TextAnalysis,
+    chunk: ChunkRecord,
+) -> float:
+    if chunk.analisis.total_terminos == 0:
+        return 0.0
+
+    score_total = 0.0
+    for lema, query_count in query_analysis.conteos.items():
+        frequency = chunk.analisis.conteos.get(lema, 0)
+        if frequency == 0:
+            continue
+
+        tf = frequency / chunk.analisis.total_terminos
+        df = index.df_global.get(lema, 0)
+        idf = math.log((1 + index.total_chunks) / (1 + df)) + 1.0
+        query_weight = 1.0 + math.log(query_count)
+        score_total += tf * idf * query_weight
+
+    return score_total
 
 
 def buscar(
@@ -17,7 +42,7 @@ def buscar(
 
     resultados: list[SearchResult] = []
     for chunk in index.chunks:
-        score = index.calcular_score_tfidf(query_analysis, chunk)
+        score = _calcular_score_tfidf(index, query_analysis, chunk)
         if score <= 0:
             continue
         resultados.append(
